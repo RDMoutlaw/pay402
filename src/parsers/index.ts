@@ -22,8 +22,9 @@ export function parseChallenges(headers: Headers): PaymentChallenge[] {
     }
   }
 
-  // Check for x402 in X-Payment-Required
-  const xPayment = headers.get("x-payment-required");
+  // Check for x402 in X-Payment-Required or Payment-Required (v2 spec)
+  const xPayment =
+    headers.get("x-payment-required") ?? headers.get("payment-required");
   if (xPayment) {
     const x402 = parseX402Header(xPayment);
     if (x402) {

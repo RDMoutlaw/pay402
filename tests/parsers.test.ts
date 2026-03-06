@@ -185,6 +185,118 @@ describe("parseX402Header", () => {
       ),
     ).toBeNull();
   });
+
+  it("normalizes CAIP-2 network identifiers", () => {
+    const caip2Map: Record<string, string> = {
+      "eip155:8453": "base",
+      "eip155:84532": "base-sepolia",
+    };
+    for (const [caip2, expected] of Object.entries(caip2Map)) {
+      const result = parseX402Header(
+        JSON.stringify({ ...validPayload, network: caip2 }),
+      );
+      expect(result).not.toBeNull();
+      expect(result!.network).toBe(expected);
+    }
+  });
+
+  it("parses base64-encoded JSON payload", () => {
+    const encoded = btoa(JSON.stringify(validPayload));
+    const result = parseX402Header(encoded);
+    expect(result).not.toBeNull();
+    expect(result!.network).toBe("base");
+    expect(result!.maxAmountRequired).toBe("1000000");
+  });
+
+  it("parses x402 v2 format with accepts array", () => {
+    const v2Payload = {
+      accepts: [
+        {
+          scheme: "exact",
+          network: "eip155:8453",
+          amount: "1000000",
+          resource: "https://api.example.com/data",
+          payTo: "0x1234567890abcdef1234567890abcdef12345678",
+          asset: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+          maxTimeoutSeconds: 60,
+        },
+      ],
+    };
+    const result = parseX402Header(JSON.stringify(v2Payload));
+    expect(result).not.toBeNull();
+    expect(result!.network).toBe("base");
+    expect(result!.maxAmountRequired).toBe("1000000");
+    expect(result!.payTo).toBe(
+      "0x1234567890abcdef1234567890abcdef12345678",
+    );
+  });
+
+  it("parses base64-encoded v2 format", () => {
+    const v2Payload = {
+      accepts: [
+        {
+          scheme: "exact",
+          network: "eip155:8453",
+          amount: "500000",
+          resource: "https://api.example.com/data",
+          payTo: "0xabcdef",
+          asset: "0x123456",
+          maxTimeoutSeconds: 30,
+        },
+      ],
+    };
+    const encoded = btoa(JSON.stringify(v2Payload));
+    const result = parseX402Header(encoded);
+    expect(result).not.toBeNull();
+    expect(result!.network).toBe("base");
+    expect(result!.maxAmountRequired).toBe("500000");
+  });
+
+  it("inherits resource from top-level in v2 format", () => {
+    const v2Payload = {
+      resource: "https://api.example.com/data",
+      accepts: [
+        {
+          scheme: "exact",
+          network: "base",
+          amount: "1000000",
+          payTo: "0x1234",
+          asset: "0x5678",
+        },
+      ],
+    };
+    const result = parseX402Header(JSON.stringify(v2Payload));
+    expect(result).not.toBeNull();
+    expect(result!.resource).toBe("https://api.example.com/data");
+  });
+
+  it("skips unsupported networks in v2 accepts array", () => {
+    const v2Payload = {
+      accepts: [
+        {
+          scheme: "exact",
+          network: "eip155:1",
+          amount: "1000000",
+          resource: "https://api.example.com/data",
+          payTo: "0x1234",
+          asset: "0x5678",
+        },
+        {
+          scheme: "exact",
+          network: "eip155:8453",
+          amount: "500000",
+          resource: "https://api.example.com/data",
+          payTo: "0xabcd",
+          asset: "0xefgh",
+        },
+      ],
+    };
+    const result = parseX402Header(JSON.stringify(v2Payload));
+    expect(result).not.toBeNull();
+    expect(result!.network).toBe("base");
+    expect(result!.maxAmountRequired).toBe("500000");
+    expect(result!.payTo).toBe("0xabcd");
+  });
 });
 
 describe("parseChallenges", () => {
@@ -217,6 +329,25 @@ describe("parseChallenges", () => {
     const headers = new Headers();
     headers.set("content-type", "application/json");
     expect(parseChallenges(headers)).toHaveLength(0);
+  });
+
+  it("reads x402 from payment-required header (v2 spec)", () => {
+    const headers = new Headers();
+    headers.set(
+      "payment-required",
+      JSON.stringify({
+        scheme: "exact",
+        network: "base",
+        maxAmountRequired: "1000000",
+        resource: "https://api.example.com/data",
+        payTo: "0x1234",
+        asset: "0x5678",
+        maxTimeoutSeconds: 60,
+      }),
+    );
+    const challenges = parseChallenges(headers);
+    expect(challenges).toHaveLength(1);
+    expect(challenges[0].type).toBe("x402");
   });
 
   it("returns only L402 when x402 is absent", () => {
