@@ -1,0 +1,83 @@
+{
+  "name": "pay402",
+  "version": "0.1.0",
+  "description": "Universal HTTP 402 payment SDK for AI agents, MCP servers, and automated pipelines",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./client": {
+      "types": "./dist/client/index.d.ts",
+      "import": "./dist/client/index.js"
+    },
+    "./rails": {
+      "types": "./dist/rails/index.d.ts",
+      "import": "./dist/rails/index.js"
+    },
+    "./middleware": {
+      "types": "./dist/middleware/index.d.ts",
+      "import": "./dist/middleware/index.js"
+    },
+    "./types": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/types/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm run test && npm run build"
+  },
+  "keywords": [
+    "http-402",
+    "l402",
+    "x402",
+    "lightning",
+    "bitcoin",
+    "usdc",
+    "payment",
+    "ai-agent",
+    "mcp",
+    "fetch"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/RDMoutlaw/pay402.git"
+  },
+  "bugs": {
+    "url": "https://github.com/RDMoutlaw/pay402/issues"
+  },
+  "homepage": "https://github.com/RDMoutlaw/pay402#readme",
+  "devDependencies": {
+    "@types/bs58": "^4.0.4",
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.0.0",
+    "@types/picomatch": "^4.0.2",
+    "@types/pino": "^7.0.4",
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "@solana/spl-token": "^0.4.14",
+    "@solana/web3.js": "^1.98.4",
+    "bs58": "^6.0.0",
+    "ethers": "^6.16.0",
+    "express": "^5.2.1",
+    "picomatch": "^4.0.0",
+    "pino": "^10.3.1"
+  }
+}
