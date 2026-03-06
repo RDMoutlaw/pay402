@@ -28,6 +28,8 @@ export interface X402Challenge {
   maxTimeoutSeconds: number;
   /** Optional metadata (token name, EIP-3009 version, etc.) */
   extra?: Record<string, unknown>;
+  /** Facilitator URL override from the server challenge */
+  facilitatorUrl?: string;
   /** Raw header value for debugging */
   rawHeader: string;
 }

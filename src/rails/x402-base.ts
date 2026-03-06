@@ -101,7 +101,7 @@ export class X402BaseAdapter implements RailAdapter {
 
     // Submit to facilitator
     const facilitatorUrl =
-      wallet.facilitatorUrl ?? DEFAULT_FACILITATOR_URL;
+      wallet.facilitatorUrl ?? challenge.facilitatorUrl ?? DEFAULT_FACILITATOR_URL;
 
     try {
       const response = await fetch(facilitatorUrl, {
