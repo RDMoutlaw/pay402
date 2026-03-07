@@ -1,6 +1,6 @@
 {
   "name": "pay402",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Universal HTTP 402 payment SDK for AI agents, MCP servers, and automated pipelines",
   "type": "module",
   "main": "dist/index.js",
