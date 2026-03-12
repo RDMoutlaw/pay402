@@ -27,6 +27,7 @@ import { LightningRailAdapter } from "../rails/lightning.js";
 import { X402BaseAdapter } from "../rails/x402-base.js";
 import { X402SolanaAdapter } from "../rails/x402-solana.js";
 import { ArkadeBridgeProvider } from "../bridge/arkade-bridge.js";
+import { LendasatBridgeProvider } from "../bridge/lendasat-bridge.js";
 import { validateConfig } from "./validate.js";
 import { createLogger, type Logger } from "../logger.js";
 import { createBtcPriceProvider } from "../price.js";
@@ -77,6 +78,13 @@ export class Pay402Client {
       const hasArkadeWallet = config.wallets.some((w) => w.type === "arkade");
       if (hasArkadeWallet) {
         this.bridgeProviders.push(new ArkadeBridgeProvider());
+      }
+
+      const hasEvmWallet = config.wallets.some((w) => w.type === "evm");
+      if (hasEvmWallet) {
+        this.bridgeProviders.push(
+          new LendasatBridgeProvider(config.bridging?.lendasat),
+        );
       }
     }
 

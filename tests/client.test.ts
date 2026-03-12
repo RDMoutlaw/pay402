@@ -138,6 +138,35 @@ vi.mock("../src/rails/arkade.js", () => {
   };
 });
 
+vi.mock("../src/bridge/lendasat-bridge.js", () => {
+  return {
+    LendasatBridgeProvider: class {
+      canBridge(source: string, target: string) {
+        return source === "x402-base" && target === "l402";
+      }
+      async quote() {
+        return {
+          sourceRail: "x402-base",
+          targetRail: "l402",
+          totalCostUsd: 0.08,
+          bridgeFeeUsd: 0.01,
+          estimatedSeconds: 90,
+        };
+      }
+      async execute() {
+        return {
+          proof: {
+            type: "l402" as const,
+            macaroon: "dGVzdG1hY2Fyb29u",
+            preimage: "lendasat-preimage-001",
+          },
+          actualCostUsd: 0.08,
+        };
+      }
+    },
+  };
+});
+
 vi.mock("../src/bridge/arkade-bridge.js", () => {
   return {
     ArkadeBridgeProvider: class {
@@ -625,6 +654,43 @@ describe("Pay402Client", () => {
       expect.objectContaining({
         rail: "l402",
         bridgedFrom: "arkade",
+      }),
+    );
+  });
+
+  // Bridge: EVM wallet pays L402 via LendaSat bridge
+  it("bridges EVM wallet to L402 via LendaSat when bridging enabled", async () => {
+    const onPayment = vi.fn();
+    const mockFetch = mockFetchSequence(
+      { status: 402, headers: makeL402Headers() },
+      { status: 200, body: '{"data":"lendasat-bridged"}' },
+    );
+    globalThis.fetch = mockFetch;
+
+    const client = new Pay402Client({
+      wallets: [
+        {
+          type: "evm",
+          privateKey: "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+          chain: "base",
+        },
+      ],
+      btcPriceUsd: 60000,
+      bridging: {
+        enabled: true,
+        allowedPaths: ["x402-base->l402"],
+      },
+      onPayment,
+    });
+
+    const response = await client.fetch("https://api.example.com/data");
+    expect(response.status).toBe(200);
+
+    // Payment record should show l402 rail with bridgedFrom
+    expect(onPayment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rail: "l402",
+        bridgedFrom: "x402-base",
       }),
     );
   });

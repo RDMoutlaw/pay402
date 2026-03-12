@@ -11,7 +11,8 @@ export {
 } from "./rails/index.js";
 export { createLogger } from "./logger.js";
 export { fetchBtcPrice, createBtcPriceProvider } from "./price.js";
-export { ArkadeBridgeProvider } from "./bridge/index.js";
+export { ArkadeBridgeProvider, LendasatBridgeProvider } from "./bridge/index.js";
+export type { LendasatBridgeConfig } from "./bridge/index.js";
 export {
   pay402Middleware,
   mcpPaymentWrapper,

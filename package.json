@@ -1,6 +1,6 @@
 {
   "name": "pay402",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Universal HTTP 402 payment SDK for AI agents, MCP servers, and automated pipelines",
   "type": "module",
   "main": "dist/index.js",
@@ -77,13 +77,17 @@
   },
   "peerDependencies": {
     "@arkade-os/sdk": ">=0.3.0",
-    "@arkade-os/boltz-swap": ">=0.1.0"
+    "@arkade-os/boltz-swap": ">=0.1.0",
+    "@lendasat/lendaswap-sdk-pure": ">=0.2.0"
   },
   "peerDependenciesMeta": {
     "@arkade-os/sdk": {
       "optional": true
     },
     "@arkade-os/boltz-swap": {
+      "optional": true
+    },
+    "@lendasat/lendaswap-sdk-pure": {
       "optional": true
     }
   },

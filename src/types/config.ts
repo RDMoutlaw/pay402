@@ -63,5 +63,10 @@ export interface Pay402ClientConfig {
     maxBridgeFeeUsd?: number;
     /** Allowed bridge paths, e.g. ["arkade->l402"] */
     allowedPaths?: string[];
+    /** LendaSat bridge config for USDC→Lightning */
+    lendasat?: {
+      chainId?: number;        // default: 137 (Polygon)
+      tokenAddress?: string;   // default: Polygon USDC
+    };
   };
 }

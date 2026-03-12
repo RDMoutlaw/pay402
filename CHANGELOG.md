@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.2.0
+
+### Features
+
+- **USDC→Lightning bridge** — New `LendasatBridgeProvider` enables EVM (USDC) wallets to pay L402 (Lightning) endpoints via LendaSat gasless atomic swaps with Permit2 signing
+- **Arkade payment rail** — Added Arkade wallet type with VTXO support
+- **Arkade→Lightning bridge** — Cross-rail bridge via Boltz submarine swap (`@arkade-os/boltz-swap`)
+- **MCP agent tools** — `pay402_fetch`, `pay402_estimate`, `pay402_spending`, `pay402_balance` for AI agent autonomous payment
+- **MCP payment wrapper** — `mcpPaymentWrapper` for gating MCP tools behind payment challenges
+- **Server-side Arkade support** — Express and MCP middleware accept Arkade as a payment rail
+- **SKILL.md** — Agent skill discovery file for MCP tool registration
+- **Spending summary API** — `client.getSpendingSummary()` with period filtering (hour/day/all) and per-rail breakdown
+- **Balance API** — `client.getBalances()` for checking wallet balances
+
+### Fixes
+
+- **Token cache bug** — Fixed `tokenType→railId` key mapping for correct multi-rail caching
+
 ## 0.1.0
 
 Initial release.

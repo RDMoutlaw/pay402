@@ -8,7 +8,7 @@ pay402 is the universal adapter. One SDK that speaks every 402 dialect, so your 
 
 But pay402 goes further than just client-side payments:
 
-- **Bridge layer** — Don't have the right wallet? pay402 routes payments across rails. An Arkade wallet can pay a Lightning invoice via atomic swap. The server never knows the difference.
+- **Bridge layer** — Don't have the right wallet? pay402 routes payments across rails. An Arkade wallet can pay a Lightning invoice via Boltz atomic swap, or a USDC wallet can pay one via LendaSat. The server never knows the difference.
 - **Server middleware** — Gate your own Express routes or MCP tools behind payment with a few lines of config. Multi-rail, multi-price, plug in your own verification.
 - **Agent skill** — Register pay402 as MCP tools so AI agents can discover, estimate, and execute paid API calls autonomously — with spending controls that keep them on a leash.
 
@@ -21,7 +21,7 @@ The net effect: any software with a wallet can pay any service with a price. The
 | **L402** | Lightning Labs | Bitcoin (sats) | Lightning Network |
 | **x402** | Coinbase | USDC | Base, Solana |
 
-Arkade wallets are supported as a **funding source** via the bridge layer — they can pay L402 invoices through atomic swaps, but Arkade is not a server-facing payment rail.
+Arkade and EVM (USDC) wallets are also supported as **funding sources** via the bridge layer — they can pay L402 invoices through atomic swaps (Boltz for Arkade, LendaSat for USDC), but neither is a server-facing payment rail for L402.
 
 ## Install
 
@@ -29,11 +29,12 @@ Arkade wallets are supported as a **funding source** via the bridge layer — th
 npm install pay402
 ```
 
-Optional peer dependencies for Arkade support:
+Optional peer dependencies for bridge support:
 
 ```bash
 npm install @arkade-os/sdk            # Arkade wallet
-npm install @arkade-os/boltz-swap     # Arkade->Lightning bridge
+npm install @arkade-os/boltz-swap     # Arkade→Lightning bridge
+npm install @lendasat/lendaswap-sdk-pure  # USDC→Lightning bridge
 ```
 
 ## Quick Start
@@ -152,11 +153,12 @@ axios.interceptors.request.use((config) => client.intercept(config));
 
 ## Cross-Rail Bridging
 
-When a server requires a rail your wallet doesn't natively support, pay402 can bridge the payment. For example, an Arkade wallet can pay a Lightning (L402) invoice via a Boltz submarine swap.
+When a server requires a rail your wallet doesn't natively support, pay402 can bridge the payment. For example, an Arkade wallet can pay a Lightning (L402) invoice via a Boltz submarine swap, or a USDC (EVM) wallet can pay one via a LendaSat atomic swap.
 
 Bridging is **opt-in** and disabled by default:
 
 ```typescript
+// Arkade → Lightning
 const client = new Pay402Client({
   wallets: [
     {
@@ -178,13 +180,40 @@ const client = new Pay402Client({
 const res = await client.fetch("https://lightning-only-api.com/data");
 ```
 
-The server sees a valid L402 preimage — it doesn't know or care that the payment was funded via Arkade. Bridge fees are included in spend control checks.
+```typescript
+// USDC → Lightning
+const client = new Pay402Client({
+  wallets: [
+    {
+      type: "evm",
+      privateKey: process.env.EVM_PRIVATE_KEY! as `0x${string}`,
+      chain: "base",
+    },
+  ],
+  bridging: {
+    enabled: true,
+    maxBridgeFeeUsd: 0.50,
+    allowedPaths: ["x402-base->l402"],
+    lendasat: {
+      chainId: 137,                      // Polygon (default)
+      tokenAddress: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359", // Polygon USDC (default)
+    },
+  },
+  autoFetchBtcPrice: true,
+});
+
+// EVM wallet pays a Lightning invoice via LendaSat gasless swap:
+const res = await client.fetch("https://lightning-only-api.com/data");
+```
+
+The server sees a valid L402 preimage — it doesn't know or care how the payment was funded. Bridge fees are included in spend control checks.
 
 Currently supported bridge paths:
 
-| Source | Target | Provider |
-|--------|--------|----------|
-| `arkade` | `l402` | Boltz submarine swap (`@arkade-os/boltz-swap`) |
+| Source | Target | Provider | Peer Dependency |
+|--------|--------|----------|-----------------|
+| `arkade` | `l402` | Boltz submarine swap | `@arkade-os/boltz-swap` |
+| `x402-base` | `l402` | LendaSat gasless atomic swap | `@lendasat/lendaswap-sdk-pure` |
 
 ## Agent Skill (MCP Client Tools)
 
@@ -372,7 +401,11 @@ For a complete guide on configuring spend policies for autonomous agents — bud
   bridging: {
     enabled: true,                       // default: false
     maxBridgeFeeUsd: 1.00,              // default: $1
-    allowedPaths: ["arkade->l402"],       // restrict which bridge paths are allowed
+    allowedPaths: ["arkade->l402", "x402-base->l402"], // restrict which bridge paths are allowed
+    lendasat: {                          // optional LendaSat config
+      chainId: 137,                      // default: 137 (Polygon)
+      tokenAddress: "0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359", // default: Polygon USDC
+    },
   },
 }
 ```
@@ -472,7 +505,7 @@ This SDK handles private keys and real money. Keep these in mind:
 
 - **Never hardcode private keys or mnemonics.** Load them from environment variables or a secret manager.
 - **The x402 facilitator is a trusted third party.** When using x402, your signed EIP-3009 authorization is submitted to a facilitator (default: `x402.org`). The facilitator executes the on-chain transfer. A malicious facilitator could withhold or front-run transactions. Use `facilitatorUrl` to point to a facilitator you trust.
-- **Bridge swaps involve a third party.** The Arkade->L402 bridge uses Boltz for submarine swaps. Bridge fees are included in spend control checks, but the swap itself is a trust relationship with the Boltz service.
+- **Bridge swaps involve a third party.** The Arkade→L402 bridge uses Boltz for submarine swaps; the USDC→L402 bridge uses LendaSat for atomic swaps. Bridge fees are included in spend control checks, but the swaps themselves are trust relationships with the respective services.
 - **Spend controls are your safety net.** Always configure `maxSinglePaymentUsd` and `global.maxDaily` for autonomous agents. The default hard ceiling is $10 per payment.
 - **No auto-retry after payment failure.** If a payment fails, the SDK throws immediately. It does not try another rail — money may have already left your wallet.
 - **No auto-fallback between rails.** Rail selection happens before payment. Once a rail is chosen and payment begins, there's no switching.
