@@ -20,7 +20,13 @@ export interface X402PaymentProof {
   };
 }
 
-export type PaymentProof = L402PaymentProof | X402PaymentProof;
+export interface ArkadePaymentProof {
+  type: "arkade";
+  txId: string;
+  from: string;
+}
+
+export type PaymentProof = L402PaymentProof | X402PaymentProof | ArkadePaymentProof;
 
 export interface CostEstimate {
   /** Amount in native units (sats or smallest USDC unit) */
@@ -32,7 +38,7 @@ export interface CostEstimate {
   confidence: "exact" | "estimate";
 }
 
-export type RailId = "l402" | "x402-base" | "x402-solana";
+export type RailId = "l402" | "x402-base" | "x402-solana" | "arkade";
 
 export interface DryRunResult {
   rail: RailId;

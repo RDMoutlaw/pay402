@@ -36,6 +36,8 @@ export interface PaymentRecord {
   amountUsd: number;
   endpoint: string;
   rail: RailId;
+  /** Source rail if payment was bridged (e.g. "arkade" when bridging to "l402") */
+  bridgedFrom?: RailId;
 }
 
 export interface Pay402ClientConfig {
@@ -53,4 +55,13 @@ export interface Pay402ClientConfig {
   onPayment?: (record: PaymentRecord) => void;
   /** Log level: "silent", "fatal", "error", "warn", "info", "debug", "trace" */
   logLevel?: string;
+  /** Cross-rail bridging configuration */
+  bridging?: {
+    /** Enable cross-rail bridging (default: false — strictly opt-in) */
+    enabled: boolean;
+    /** Max bridge fee in USD (default: $1) */
+    maxBridgeFeeUsd?: number;
+    /** Allowed bridge paths, e.g. ["arkade->l402"] */
+    allowedPaths?: string[];
+  };
 }

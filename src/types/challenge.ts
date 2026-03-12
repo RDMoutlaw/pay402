@@ -34,4 +34,16 @@ export interface X402Challenge {
   rawHeader: string;
 }
 
-export type PaymentChallenge = L402Challenge | X402Challenge;
+export interface ArkadeChallenge {
+  type: "arkade";
+  /** ark1... recipient address */
+  payTo: string;
+  /** Amount in satoshis */
+  amountSats: number;
+  /** How long server waits for payment */
+  maxTimeoutSeconds?: number;
+  /** Raw header value for debugging */
+  rawHeader: string;
+}
+
+export type PaymentChallenge = L402Challenge | X402Challenge | ArkadeChallenge;

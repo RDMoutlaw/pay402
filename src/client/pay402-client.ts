@@ -1,4 +1,5 @@
 import type { RailAdapter } from "../types/adapter.js";
+import type { BridgeProvider, BridgeQuote } from "../types/bridge.js";
 import type { PaymentChallenge } from "../types/challenge.js";
 import type {
   Pay402ClientConfig,
@@ -17,6 +18,7 @@ import {
   PaymentVerificationError,
   SpendLimitExceededError,
   Pay402Error,
+  BridgePaymentFailedError,
 } from "../types/errors.js";
 import { parseChallenges } from "../parsers/index.js";
 import { TokenCache } from "../cache/token-cache.js";
@@ -24,6 +26,8 @@ import { SpendControls } from "../controls/spend-controls.js";
 import { LightningRailAdapter } from "../rails/lightning.js";
 import { X402BaseAdapter } from "../rails/x402-base.js";
 import { X402SolanaAdapter } from "../rails/x402-solana.js";
+import { ArkadeRailAdapter } from "../rails/arkade.js";
+import { ArkadeBridgeProvider } from "../bridge/arkade-bridge.js";
 import { validateConfig } from "./validate.js";
 import { createLogger, type Logger } from "../logger.js";
 import { createBtcPriceProvider } from "../price.js";
@@ -36,6 +40,14 @@ interface PendingPayment {
   rail: RailId;
 }
 
+interface RailSelection {
+  adapter: RailAdapter;
+  wallet: WalletConfig;
+  challenge: PaymentChallenge;
+  estimate: CostEstimate;
+  bridge?: { provider: BridgeProvider; quote: BridgeQuote };
+}
+
 export class Pay402Client {
   private cache = new TokenCache();
   private controls: SpendControls;
@@ -45,6 +57,7 @@ export class Pay402Client {
   private pending = new Map<string, PendingPayment>();
   private log: Logger;
   private btcPriceProvider?: { getPrice: () => number | undefined; stop: () => void };
+  private bridgeProviders: BridgeProvider[] = [];
 
   constructor(config: Pay402ClientConfig) {
     validateConfig(config);
@@ -58,7 +71,16 @@ export class Pay402Client {
       new LightningRailAdapter(),
       new X402BaseAdapter(),
       new X402SolanaAdapter(),
+      new ArkadeRailAdapter(),
     ];
+
+    // Register bridge providers if bridging is enabled
+    if (config.bridging?.enabled) {
+      const hasArkadeWallet = config.wallets.some((w) => w.type === "arkade");
+      if (hasArkadeWallet) {
+        this.bridgeProviders.push(new ArkadeBridgeProvider());
+      }
+    }
 
     // Auto-fetch BTC price if configured
     if (config.autoFetchBtcPrice) {
@@ -80,6 +102,53 @@ export class Pay402Client {
   }
 
   /**
+   * Get a spending summary for the given period.
+   */
+  getSpendingSummary(
+    period?: "hour" | "day" | "all",
+  ): { totalUsd: number; count: number; byRail: Record<string, { totalUsd: number; count: number }> } {
+    const sinceMs =
+      period === "hour"
+        ? 3_600_000
+        : period === "day"
+          ? 86_400_000
+          : undefined;
+    return this.controls.getSummary(sinceMs);
+  }
+
+  /**
+   * Check wallet balances. Only supported for Arkade wallets.
+   */
+  async getBalances(): Promise<
+    Array<{ type: string; balanceSats?: number; error?: string }>
+  > {
+    const results: Array<{ type: string; balanceSats?: number; error?: string }> = [];
+
+    for (const wallet of this.wallets) {
+      if (wallet.type === "arkade") {
+        try {
+          const { getOrCreateArkadeWallet: getWallet } = await import("../rails/arkade.js");
+          const arkWallet = await getWallet(wallet);
+          const balance = await arkWallet.getBalance();
+          results.push({ type: "arkade", balanceSats: balance.total });
+        } catch (err) {
+          results.push({
+            type: "arkade",
+            error: (err as Error).message,
+          });
+        }
+      } else {
+        results.push({
+          type: wallet.type,
+          error: "balance check not supported",
+        });
+      }
+    }
+
+    return results;
+  }
+
+  /**
    * Drop-in replacement for native fetch.
    * Automatically handles 402 responses by paying and retrying.
    */
@@ -98,9 +167,7 @@ export class Pay402Client {
     // Check cache first
     const cached = this.cache.get(method, url);
     if (cached) {
-      const adapter = this.adapters.find(
-        (a) => a.railId === (cached.tokenType === "l402" ? "l402" : "x402-base"),
-      );
+      const adapter = this.adapters.find((a) => a.railId === cached.railId);
       if (adapter) {
         this.log.debug({ method, url }, "Using cached payment token");
         const headers = adapter.buildAuthHeader(cached.proof);
@@ -127,38 +194,37 @@ export class Pay402Client {
       "Received 402 challenge",
     );
 
-    // Select the best rail
+    // Select the best rail (with optional bridge fallback)
     const selection = await this.selectRail(challenges, url);
 
     // Estimate cost and run sanity checks
     const btcPrice = this.btcPriceProvider?.getPrice() ?? this.config.btcPriceUsd;
-    const estimate = await selection.adapter.estimateCost(
-      selection.challenge,
-      btcPrice,
-    );
+    const costUsd = selection.bridge
+      ? selection.bridge.quote.totalCostUsd
+      : selection.estimate.amountUsd;
 
     // Hard ceiling check
     const maxSingle =
       this.config.maxSinglePaymentUsd ?? DEFAULT_MAX_SINGLE_PAYMENT_USD;
-    if (estimate.amountUsd > maxSingle) {
+    if (costUsd > maxSingle) {
       throw new SpendLimitExceededError(
         "max single payment",
         maxSingle,
-        estimate.amountUsd,
+        costUsd,
         0,
       );
     }
 
     // Spend control checks
-    this.controls.check(url, estimate.amountUsd);
+    this.controls.check(url, costUsd);
 
     // Dry-run mode — return estimate without paying
     if (this.controls.isDryRun) {
-      const violation = this.controls.wouldExceed(url, estimate.amountUsd);
+      const violation = this.controls.wouldExceed(url, costUsd);
       return new Response(
         JSON.stringify({
           rail: selection.adapter.railId,
-          estimatedCostUsd: estimate.amountUsd,
+          estimatedCostUsd: costUsd,
           wouldExceedLimits: violation !== null,
           limitViolation: violation ?? undefined,
           challenge: selection.challenge,
@@ -178,10 +244,13 @@ export class Pay402Client {
     if (existing) {
       proof = await existing.promise;
     } else {
-      const paymentPromise = selection.adapter.pay(
-        selection.challenge,
-        selection.wallet,
-      );
+      // Execute payment — either via bridge or directly
+      const paymentPromise = selection.bridge
+        ? selection.bridge.provider
+            .execute(selection.challenge, selection.wallet, selection.bridge.quote)
+            .then((r) => r.proof)
+        : selection.adapter.pay(selection.challenge, selection.wallet);
+
       this.pending.set(dedupeKey, {
         promise: paymentPromise,
         rail: selection.adapter.railId,
@@ -193,6 +262,7 @@ export class Pay402Client {
         this.pending.delete(dedupeKey);
         if (
           err instanceof PaymentFailedError ||
+          err instanceof BridgePaymentFailedError ||
           err instanceof Pay402Error
         ) {
           throw err;
@@ -209,9 +279,12 @@ export class Pay402Client {
     // Record the payment
     const record: PaymentRecord = {
       timestamp: Date.now(),
-      amountUsd: estimate.amountUsd,
+      amountUsd: costUsd,
       endpoint: url,
       rail: selection.adapter.railId,
+      ...(selection.bridge && {
+        bridgedFrom: walletTypeToRailId(selection.wallet.type),
+      }),
     };
     this.controls.recordPayment(record);
     this.config.onPayment?.(record);
@@ -258,10 +331,7 @@ export class Pay402Client {
 
     const cached = this.cache.get(method, url);
     if (cached) {
-      const adapter = this.adapters.find(
-        (a) =>
-          a.railId === (cached.tokenType === "l402" ? "l402" : "x402-base"),
-      );
+      const adapter = this.adapters.find((a) => a.railId === cached.railId);
       if (adapter) {
         const headers = adapter.buildAuthHeader(cached.proof);
         config.headers = { ...config.headers, ...headers };
@@ -274,19 +344,14 @@ export class Pay402Client {
   private async selectRail(
     challenges: PaymentChallenge[],
     url: string,
-  ): Promise<{
-    adapter: RailAdapter;
-    wallet: WalletConfig;
-    challenge: PaymentChallenge;
-    estimate: CostEstimate;
-  }> {
+  ): Promise<RailSelection> {
     const preference = this.controls.railPreference;
 
     if (preference === "cheapest") {
       return this.selectCheapestRail(challenges);
     }
 
-    // Ordered preference
+    // Ordered preference — try direct match first
     for (const railId of preference) {
       const adapter = this.adapters.find((a) => a.railId === railId);
       if (!adapter) continue;
@@ -304,6 +369,12 @@ export class Pay402Client {
       return { adapter, wallet, challenge, estimate };
     }
 
+    // No direct match — try bridge fallback if enabled
+    if (this.config.bridging?.enabled && this.bridgeProviders.length > 0) {
+      const bridged = await this.selectBridgedRail(challenges);
+      if (bridged) return bridged;
+    }
+
     throw new NoCompatibleRailError(
       challenges.map((c) => c.type),
       this.wallets.map((w) => w.type),
@@ -312,18 +383,8 @@ export class Pay402Client {
 
   private async selectCheapestRail(
     challenges: PaymentChallenge[],
-  ): Promise<{
-    adapter: RailAdapter;
-    wallet: WalletConfig;
-    challenge: PaymentChallenge;
-    estimate: CostEstimate;
-  }> {
-    const candidates: Array<{
-      adapter: RailAdapter;
-      wallet: WalletConfig;
-      challenge: PaymentChallenge;
-      estimate: CostEstimate;
-    }> = [];
+  ): Promise<RailSelection> {
+    const candidates: RailSelection[] = [];
 
     for (const challenge of challenges) {
       for (const adapter of this.adapters) {
@@ -350,6 +411,55 @@ export class Pay402Client {
     return candidates[0];
   }
 
+  private async selectBridgedRail(
+    challenges: PaymentChallenge[],
+  ): Promise<RailSelection | null> {
+    const btcPrice = this.btcPriceProvider?.getPrice() ?? this.config.btcPriceUsd;
+    const maxBridgeFee = this.config.bridging?.maxBridgeFeeUsd ?? 1;
+    const allowedPaths = this.config.bridging?.allowedPaths;
+
+    for (const challenge of challenges) {
+      // Find the target adapter for this challenge
+      const targetAdapter = this.adapters.find((a) => a.canHandle(challenge));
+      if (!targetAdapter) continue;
+      const targetRailId = targetAdapter.railId;
+
+      for (const provider of this.bridgeProviders) {
+        for (const wallet of this.wallets) {
+          const sourceRailId = walletTypeToRailId(wallet.type);
+          if (!sourceRailId) continue;
+          if (!provider.canBridge(sourceRailId, targetRailId)) continue;
+
+          // Check allowed paths filter
+          const path = `${sourceRailId}->${targetRailId}`;
+          if (allowedPaths && !allowedPaths.includes(path)) continue;
+
+          try {
+            const quote = await provider.quote(challenge, wallet, btcPrice);
+
+            // Check bridge fee limit
+            if (quote.bridgeFeeUsd > maxBridgeFee) continue;
+
+            const estimate = await targetAdapter.estimateCost(challenge, btcPrice);
+
+            return {
+              adapter: targetAdapter,
+              wallet,
+              challenge,
+              estimate,
+              bridge: { provider, quote },
+            };
+          } catch {
+            // Skip this bridge path if quoting fails
+            continue;
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+
   private findWallet(railId: RailId): WalletConfig | undefined {
     switch (railId) {
       case "l402":
@@ -358,7 +468,24 @@ export class Pay402Client {
         return this.wallets.find((w) => w.type === "evm");
       case "x402-solana":
         return this.wallets.find((w) => w.type === "solana");
+      case "arkade":
+        return this.wallets.find((w) => w.type === "arkade");
     }
+  }
+}
+
+function walletTypeToRailId(type: string): RailId | undefined {
+  switch (type) {
+    case "lightning":
+      return "l402";
+    case "evm":
+      return "x402-base";
+    case "solana":
+      return "x402-solana";
+    case "arkade":
+      return "arkade";
+    default:
+      return undefined;
   }
 }
 

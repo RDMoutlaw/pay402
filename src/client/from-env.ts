@@ -55,6 +55,19 @@ export function fromEnv(
     });
   }
 
+  // Arkade
+  const arkadeMnemonic = process.env.ARKADE_MNEMONIC;
+  const arkadeServerUrl = process.env.ARKADE_SERVER_URL;
+  if (arkadeMnemonic && arkadeServerUrl) {
+    wallets.push({
+      type: "arkade",
+      mnemonic: arkadeMnemonic,
+      arkServerUrl: arkadeServerUrl,
+      network:
+        (process.env.ARKADE_NETWORK as "mainnet" | "testnet") ?? "mainnet",
+    });
+  }
+
   const maxPerRequest = parseFloat(
     process.env.PAY402_MAX_PER_REQUEST ?? "",
   );

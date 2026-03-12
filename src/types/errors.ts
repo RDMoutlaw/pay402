@@ -72,6 +72,19 @@ export class PaymentVerificationError extends Pay402Error {
   }
 }
 
+export class BridgePaymentFailedError extends Pay402Error {
+  constructor(
+    public readonly bridgePath: string,
+    public readonly underlyingError: Error,
+  ) {
+    super(
+      `Bridge payment failed on path "${bridgePath}": ${underlyingError.message}`,
+      { cause: underlyingError },
+    );
+    this.name = "BridgePaymentFailedError";
+  }
+}
+
 export class InvoiceExpiredError extends Pay402Error {
   constructor(
     public readonly invoiceExpiry: Date,

@@ -118,7 +118,7 @@ export class SpendControls {
    * Get the preferred rail ordering based on config.
    */
   get railPreference(): RailId[] | "cheapest" {
-    return this.config.railPreference ?? ["l402", "x402-base", "x402-solana"];
+    return this.config.railPreference ?? ["l402", "x402-base", "x402-solana", "arkade"];
   }
 
   get isDryRun(): boolean {
@@ -154,6 +154,32 @@ export class SpendControls {
         );
       }
     }
+  }
+
+  /**
+   * Get a spending summary for the given time window.
+   */
+  getSummary(sinceMs?: number): {
+    totalUsd: number;
+    count: number;
+    byRail: Record<string, { totalUsd: number; count: number }>;
+  } {
+    const since = sinceMs ? Date.now() - sinceMs : 0;
+    const filtered = this.records.filter((r) => r.timestamp >= since);
+
+    const byRail: Record<string, { totalUsd: number; count: number }> = {};
+    let totalUsd = 0;
+
+    for (const r of filtered) {
+      totalUsd += r.amountUsd;
+      if (!byRail[r.rail]) {
+        byRail[r.rail] = { totalUsd: 0, count: 0 };
+      }
+      byRail[r.rail].totalUsd += r.amountUsd;
+      byRail[r.rail].count += 1;
+    }
+
+    return { totalUsd, count: filtered.length, byRail };
   }
 
   private sumSpendSince(since: number): number {

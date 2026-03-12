@@ -28,7 +28,17 @@ export interface SolanaWalletConfig {
   facilitatorUrl?: string;
 }
 
+export interface ArkadeWalletConfig {
+  type: "arkade";
+  /** BIP-39 mnemonic */
+  mnemonic: string;
+  /** Arkade server URL, e.g. "https://arkade.computer" */
+  arkServerUrl: string;
+  network: "mainnet" | "testnet";
+}
+
 export type WalletConfig =
   | LightningWalletConfig
   | EVMWalletConfig
-  | SolanaWalletConfig;
+  | SolanaWalletConfig
+  | ArkadeWalletConfig;

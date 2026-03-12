@@ -48,6 +48,20 @@ export function validateConfig(config: Pay402ClientConfig): void {
         }
         break;
 
+      case "arkade":
+        if (!wallet.mnemonic) {
+          throw new Pay402Error("Arkade wallet: mnemonic is required");
+        }
+        if (!wallet.arkServerUrl) {
+          throw new Pay402Error("Arkade wallet: arkServerUrl is required");
+        }
+        if (wallet.network !== "mainnet" && wallet.network !== "testnet") {
+          throw new Pay402Error(
+            'Arkade wallet: network must be "mainnet" or "testnet"',
+          );
+        }
+        break;
+
       default:
         throw new Pay402Error(
           `Unknown wallet type: ${(wallet as { type: string }).type}`,

@@ -132,6 +132,79 @@ vi.mock("../src/rails/x402-base.js", () => {
   };
 });
 
+vi.mock("../src/rails/arkade.js", () => {
+  return {
+    ArkadeRailAdapter: class {
+      railId = "arkade" as const;
+      canHandle(c: { type: string }) {
+        return c.type === "arkade";
+      }
+      async pay() {
+        return {
+          type: "arkade" as const,
+          txId: "vtxo-tx-001",
+          from: "ark1sender",
+        };
+      }
+      buildAuthHeader(proof: { txId: string; from: string }) {
+        return {
+          "X-Arkade-Payment-Proof": btoa(
+            JSON.stringify({ txId: proof.txId, from: proof.from }),
+          ),
+        };
+      }
+      async estimateCost(challenge: { amountSats?: number }) {
+        const sats = challenge.amountSats ?? 0;
+        return {
+          amountRaw: String(sats),
+          currency: "sats" as const,
+          amountUsd: (sats / 1e8) * 60000,
+          confidence: "exact" as const,
+        };
+      }
+    },
+    getOrCreateArkadeWallet: vi.fn(),
+  };
+});
+
+vi.mock("../src/bridge/arkade-bridge.js", () => {
+  return {
+    ArkadeBridgeProvider: class {
+      canBridge(source: string, target: string) {
+        return source === "arkade" && target === "l402";
+      }
+      async quote() {
+        return {
+          sourceRail: "arkade",
+          targetRail: "l402",
+          totalCostUsd: 0.10,
+          bridgeFeeUsd: 0.01,
+          estimatedSeconds: 30,
+        };
+      }
+      async execute() {
+        return {
+          proof: {
+            type: "l402" as const,
+            macaroon: "dGVzdG1hY2Fyb29u",
+            preimage: "bridge-preimage-001",
+          },
+          actualCostUsd: 0.10,
+        };
+      }
+    },
+  };
+});
+
+function makeArkadeHeaders(
+  payTo = "ark1recipient",
+  amountSats = 5000,
+) {
+  return {
+    "x-arkade-payment": JSON.stringify({ payTo, amountSats }),
+  };
+}
+
 describe("Pay402Client", () => {
   let originalFetch: typeof globalThis.fetch;
 
@@ -554,5 +627,97 @@ describe("Pay402Client", () => {
     await expect(
       client.fetch("https://api.example.com/expensive"),
     ).rejects.toThrow(SpendLimitExceededError);
+  });
+
+  // Arkade happy path
+  it("pays an Arkade challenge and retries with X-Arkade-Payment-Proof", async () => {
+    const mockFetch = mockFetchSequence(
+      { status: 402, headers: makeArkadeHeaders() },
+      { status: 200, body: '{"data":"arkade-secret"}' },
+    );
+    globalThis.fetch = mockFetch;
+
+    const client = new Pay402Client({
+      wallets: [
+        {
+          type: "arkade",
+          mnemonic: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+          arkServerUrl: "https://arkade.computer",
+          network: "testnet",
+        },
+      ],
+      btcPriceUsd: 60000,
+    });
+
+    const response = await client.fetch("https://api.example.com/data");
+    expect(response.status).toBe(200);
+
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    const retryHeaders = new Headers(
+      (mockFetch.mock.calls[1][1] as RequestInit)?.headers,
+    );
+    expect(retryHeaders.get("x-arkade-payment-proof")).toBeTruthy();
+  });
+
+  // Bridge: Arkade wallet pays L402 via bridge
+  it("bridges Arkade wallet to L402 when bridging enabled", async () => {
+    const onPayment = vi.fn();
+    const mockFetch = mockFetchSequence(
+      { status: 402, headers: makeL402Headers() },
+      { status: 200, body: '{"data":"bridged"}' },
+    );
+    globalThis.fetch = mockFetch;
+
+    const client = new Pay402Client({
+      wallets: [
+        {
+          type: "arkade",
+          mnemonic: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+          arkServerUrl: "https://arkade.computer",
+          network: "testnet",
+        },
+      ],
+      btcPriceUsd: 60000,
+      bridging: {
+        enabled: true,
+        allowedPaths: ["arkade->l402"],
+      },
+      onPayment,
+    });
+
+    const response = await client.fetch("https://api.example.com/data");
+    expect(response.status).toBe(200);
+
+    // Payment record should show l402 rail with bridgedFrom
+    expect(onPayment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rail: "l402",
+        bridgedFrom: "arkade",
+      }),
+    );
+  });
+
+  // Bridge disabled by default
+  it("throws NoCompatibleRailError when only arkade wallet and l402 challenge without bridging", async () => {
+    const mockFetch = mockFetchSequence(
+      { status: 402, headers: makeL402Headers() },
+    );
+    globalThis.fetch = mockFetch;
+
+    const client = new Pay402Client({
+      wallets: [
+        {
+          type: "arkade",
+          mnemonic: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
+          arkServerUrl: "https://arkade.computer",
+          network: "testnet",
+        },
+      ],
+      btcPriceUsd: 60000,
+    });
+
+    await expect(
+      client.fetch("https://api.example.com/data"),
+    ).rejects.toThrow("No compatible rail");
   });
 });

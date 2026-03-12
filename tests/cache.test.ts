@@ -32,7 +32,7 @@ describe("TokenCache", () => {
 
     const entry = cache.get("GET", "https://api.example.com/data");
     expect(entry).not.toBeNull();
-    expect(entry!.tokenType).toBe("l402");
+    expect(entry!.railId).toBe("l402");
     expect(entry!.token).toBe("abc123:def456");
     expect(entry!.proof).toBe(l402Proof);
   });
@@ -43,7 +43,7 @@ describe("TokenCache", () => {
 
     const entry = cache.get("POST", "https://api.example.com/data");
     expect(entry).not.toBeNull();
-    expect(entry!.tokenType).toBe("x402");
+    expect(entry!.railId).toBe("x402-base");
     expect(entry!.proof).toBe(x402Proof);
   });
 
@@ -52,11 +52,11 @@ describe("TokenCache", () => {
     cache.set("GET", "https://api.example.com/data", l402Proof);
     cache.set("POST", "https://api.example.com/data", x402Proof, 60_000);
 
-    expect(cache.get("GET", "https://api.example.com/data")!.tokenType).toBe(
+    expect(cache.get("GET", "https://api.example.com/data")!.railId).toBe(
       "l402",
     );
-    expect(cache.get("POST", "https://api.example.com/data")!.tokenType).toBe(
-      "x402",
+    expect(cache.get("POST", "https://api.example.com/data")!.railId).toBe(
+      "x402-base",
     );
     expect(cache.size).toBe(2);
   });

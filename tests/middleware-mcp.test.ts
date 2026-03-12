@@ -1,16 +1,20 @@
 import { describe, it, expect, vi } from "vitest";
+import { z } from "zod";
 import {
   mcpPaymentWrapper,
   type McpPaymentChallenge,
 } from "../src/middleware/mcp.js";
 
-// Minimal mock of McpServer — just needs registerTool
+// Mock server that simulates Zod validation like the real MCP SDK.
+// The real SDK parses args through the tool's inputSchema before
+// calling the handler — unknown fields get stripped.
 function createMockServer() {
   const registeredTools = new Map<
     string,
     {
       config: Record<string, unknown>;
       handler: (args: Record<string, unknown>, extra: unknown) => unknown;
+      inputSchema?: unknown;
     }
   >();
 
@@ -21,11 +25,52 @@ function createMockServer() {
         config: Record<string, unknown>,
         handler: (args: Record<string, unknown>, extra: unknown) => unknown,
       ) => {
-        registeredTools.set(name, { config, handler });
-        return { name, enabled: true };
+        registeredTools.set(name, {
+          config,
+          handler,
+          inputSchema: config.inputSchema,
+        });
+        return { name, enabled: true, update: vi.fn(), remove: vi.fn(), disable: vi.fn(), enable: vi.fn() };
       },
     ),
     _registered: registeredTools,
+
+    /**
+     * Simulate how the real MCP SDK calls a tool:
+     * parse args through the inputSchema, then call the handler.
+     */
+    async callTool(name: string, rawArgs: Record<string, unknown>) {
+      const tool = registeredTools.get(name);
+      if (!tool) throw new Error(`Tool ${name} not found`);
+
+      let parsedArgs = rawArgs;
+
+      // Simulate Zod validation + stripping like the real SDK
+      if (tool.inputSchema) {
+        let schema: z.ZodTypeAny;
+
+        // Handle both ZodRawShapeCompat (plain object) and ZodObject
+        if (
+          typeof tool.inputSchema === "object" &&
+          tool.inputSchema !== null &&
+          "_def" in (tool.inputSchema as any)
+        ) {
+          // Already a Zod schema
+          schema = tool.inputSchema as z.ZodTypeAny;
+        } else {
+          // ZodRawShapeCompat — wrap in z.object()
+          schema = z.object(tool.inputSchema as Record<string, z.ZodTypeAny>);
+        }
+
+        const result = schema.safeParse(rawArgs);
+        if (!result.success) {
+          throw new Error(`Validation failed: ${result.error.message}`);
+        }
+        parsedArgs = result.data;
+      }
+
+      return tool.handler(parsedArgs, {});
+    },
   };
 
   return server;
@@ -56,11 +101,8 @@ describe("mcpPaymentWrapper", () => {
       }),
     );
 
-    // Get the wrapped handler
-    const tool = server._registered.get("premium-tool")!;
-
-    // Call without payment proof
-    const result = (await tool.handler({}, {})) as {
+    // Call without payment proof via SDK-like path
+    const result = (await server.callTool("premium-tool", {})) as {
       content: Array<{ type: string; text: string }>;
       isError?: boolean;
     };
@@ -78,7 +120,7 @@ describe("mcpPaymentWrapper", () => {
     });
   });
 
-  it("passes through to real handler with valid L402 proof", async () => {
+  it("passes L402 proof through Zod validation to the handler", async () => {
     const server = createMockServer();
 
     mcpPaymentWrapper({
@@ -92,27 +134,51 @@ describe("mcpPaymentWrapper", () => {
 
     server.registerTool(
       "premium-tool",
-      { description: "A paid tool" },
+      {
+        description: "A paid tool",
+        inputSchema: { query: z.string() },
+      },
       async (args: Record<string, unknown>) => ({
         content: [{ type: "text" as const, text: `result: ${args.query}` }],
       }),
     );
 
-    const tool = server._registered.get("premium-tool")!;
-
-    const result = (await tool.handler(
-      {
-        query: "hello",
-        _payment_proof: {
-          type: "l402",
-          macaroon: "good-mac",
-          preimage: "good-pre",
-        },
+    // Call with payment proof — the proof must survive Zod validation
+    const result = (await server.callTool("premium-tool", {
+      query: "hello",
+      _payment_proof: {
+        type: "l402",
+        macaroon: "good-mac",
+        preimage: "good-pre",
       },
-      {},
-    )) as { content: Array<{ type: string; text: string }> };
+    })) as { content: Array<{ type: string; text: string }> };
 
     expect(result.content[0].text).toBe("result: hello");
+  });
+
+  it("injects _payment_proof into schema so it survives validation", async () => {
+    const server = createMockServer();
+
+    mcpPaymentWrapper({
+      server: server as any,
+      pricing: { "tool": { l402: 100 } },
+      acceptedRails: ["l402"],
+      verifyL402: () => true,
+    });
+
+    server.registerTool(
+      "tool",
+      { inputSchema: { name: z.string() } },
+      async (args: Record<string, unknown>) => ({
+        content: [{ type: "text" as const, text: "ok" }],
+      }),
+    );
+
+    // Verify the registered tool's schema includes _payment_proof
+    const tool = server._registered.get("tool")!;
+    const schema = tool.inputSchema as Record<string, z.ZodTypeAny>;
+    expect(schema["_payment_proof"]).toBeDefined();
+    expect(schema["name"]).toBeDefined();
   });
 
   it("strips _payment_proof from args before passing to handler", async () => {
@@ -129,18 +195,14 @@ describe("mcpPaymentWrapper", () => {
     });
 
     server.registerTool("tool", {}, handlerSpy);
-    const tool = server._registered.get("tool")!;
 
-    await tool.handler(
-      {
-        data: "value",
-        _payment_proof: { type: "l402", macaroon: "m", preimage: "p" },
-      },
-      {},
-    );
+    await server.callTool("tool", {
+      data: "value",
+      _payment_proof: { type: "l402", macaroon: "m", preimage: "p" },
+    });
 
     expect(handlerSpy).toHaveBeenCalledWith(
-      { data: "value" },
+      expect.not.objectContaining({ _payment_proof: expect.anything() }),
       {},
     );
   });
@@ -163,13 +225,9 @@ describe("mcpPaymentWrapper", () => {
       }),
     );
 
-    const tool = server._registered.get("tool")!;
-    const result = (await tool.handler(
-      {
-        _payment_proof: { type: "l402", macaroon: "bad", preimage: "bad" },
-      },
-      {},
-    )) as { content: Array<{ text: string }>; isError?: boolean };
+    const result = (await server.callTool("tool", {
+      _payment_proof: { type: "l402", macaroon: "bad", preimage: "bad" },
+    })) as { content: Array<{ text: string }>; isError?: boolean };
 
     expect(result.isError).toBe(true);
     expect(JSON.parse(result.content[0].text).error).toBe("payment_invalid");
@@ -189,13 +247,11 @@ describe("mcpPaymentWrapper", () => {
     });
 
     server.registerTool("free-tool", {}, handler);
-    const tool = server._registered.get("free-tool")!;
 
-    const result = (await tool.handler({}, {})) as {
+    const result = (await server.callTool("free-tool", {})) as {
       content: Array<{ text: string }>;
     };
     expect(result.content[0].text).toBe("free");
-    // Handler should be called directly without payment wrapping
     expect(handler).toHaveBeenCalled();
   });
 
@@ -217,18 +273,12 @@ describe("mcpPaymentWrapper", () => {
       }),
     );
 
-    const tool = server._registered.get("tool")!;
-
-    // Valid x402 proof
-    const result = (await tool.handler(
-      {
-        _payment_proof: {
-          type: "x402",
-          payload: { signature: "0xvalid" },
-        },
+    const result = (await server.callTool("tool", {
+      _payment_proof: {
+        type: "x402",
+        payload: { signature: "0xvalid" },
       },
-      {},
-    )) as { content: Array<{ text: string }>; isError?: boolean };
+    })) as { content: Array<{ text: string }>; isError?: boolean };
 
     expect(result.isError).toBeUndefined();
     expect(result.content[0].text).toBe("paid content");
@@ -252,8 +302,7 @@ describe("mcpPaymentWrapper", () => {
       }),
     );
 
-    const tool = server._registered.get("tool")!;
-    const result = (await tool.handler({}, {})) as {
+    const result = (await server.callTool("tool", {})) as {
       content: Array<{ text: string }>;
     };
 
@@ -262,5 +311,36 @@ describe("mcpPaymentWrapper", () => {
     );
     expect(challenge.challenges).toHaveLength(1);
     expect(challenge.challenges[0].rail).toBe("l402");
+  });
+
+  it("supports arkade proof verification", async () => {
+    const server = createMockServer();
+
+    mcpPaymentWrapper({
+      server: server as any,
+      pricing: { "tool": { arkade: 1000 } },
+      acceptedRails: ["arkade"],
+      verifyArkade: (proof) => proof.txId === "vtxo-001",
+      arkadePayTo: "ark1server",
+    });
+
+    server.registerTool(
+      "tool",
+      {},
+      async () => ({
+        content: [{ type: "text" as const, text: "arkade content" }],
+      }),
+    );
+
+    const result = (await server.callTool("tool", {
+      _payment_proof: {
+        type: "arkade",
+        txId: "vtxo-001",
+        from: "ark1client",
+      },
+    })) as { content: Array<{ text: string }>; isError?: boolean };
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toBe("arkade content");
   });
 });

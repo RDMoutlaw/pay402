@@ -4,3 +4,4 @@ export * from "./challenge.js";
 export * from "./payment.js";
 export * from "./config.js";
 export * from "./adapter.js";
+export * from "./bridge.js";

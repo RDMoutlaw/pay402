@@ -7,9 +7,12 @@ export {
   LightningRailAdapter,
   X402BaseAdapter,
   X402SolanaAdapter,
+  ArkadeRailAdapter,
+  getOrCreateArkadeWallet,
 } from "./rails/index.js";
 export { createLogger } from "./logger.js";
 export { fetchBtcPrice, createBtcPriceProvider } from "./price.js";
+export { ArkadeBridgeProvider } from "./bridge/index.js";
 export {
   pay402Middleware,
   mcpPaymentWrapper,
@@ -21,3 +24,5 @@ export type {
   McpToolPricing,
   McpPaymentChallenge,
 } from "./middleware/index.js";
+export { registerPay402Tools } from "./mcp-tool/index.js";
+export type { RegisterPay402ToolsConfig } from "./mcp-tool/index.js";

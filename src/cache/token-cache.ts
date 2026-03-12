@@ -1,7 +1,7 @@
-import type { PaymentProof } from "../types/payment.js";
+import type { PaymentProof, RailId } from "../types/payment.js";
 
 interface CacheEntry {
-  tokenType: "l402" | "x402";
+  railId: RailId;
   token: string;
   expiresAt: number;
   proof: PaymentProof;
@@ -30,16 +30,23 @@ export class TokenCache {
 
     if (proof.type === "l402") {
       this.store.set(key, {
-        tokenType: "l402",
+        railId: "l402",
         token: `${proof.macaroon}:${proof.preimage}`,
         expiresAt: Date.now() + (ttlMs ?? DEFAULT_L402_TTL_MS),
         proof,
       });
-    } else {
+    } else if (proof.type === "x402") {
       this.store.set(key, {
-        tokenType: "x402",
+        railId: "x402-base", // x402 proof doesn't distinguish base vs solana; stored generically
         token: btoa(JSON.stringify(proof.payload)),
         expiresAt: Date.now() + (ttlMs ?? 30_000),
+        proof,
+      });
+    } else if (proof.type === "arkade") {
+      this.store.set(key, {
+        railId: "arkade",
+        token: btoa(JSON.stringify({ txId: proof.txId, from: proof.from })),
+        expiresAt: Date.now() + (ttlMs ?? DEFAULT_L402_TTL_MS),
         proof,
       });
     }

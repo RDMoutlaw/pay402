@@ -1,11 +1,14 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import { z } from "zod";
 
 export interface McpToolPricing {
   /** Price in sats for L402 rail */
   l402?: number;
   /** Price in smallest USDC unit for x402 rail */
   x402?: number;
+  /** Price in sats for Arkade rail */
+  arkade?: number;
 }
 
 export interface McpPaymentChallenge {
@@ -21,6 +24,7 @@ export interface McpPaymentChallenge {
         asset: string;
         maxTimeoutSeconds: number;
       }
+    | { rail: "arkade"; amountSats: number; payTo: string }
   >;
 }
 
@@ -33,23 +37,77 @@ export interface McpWrapperConfig {
   verifyL402?: (macaroon: string, preimage: string) => boolean | Promise<boolean>;
   /** Verify x402 proof. Returns true if valid. */
   verifyX402?: (payload: Record<string, unknown>) => boolean | Promise<boolean>;
+  /** Verify Arkade proof. Returns true if valid. */
+  verifyArkade?: (proof: { txId: string; from: string }) => boolean | Promise<boolean>;
   /** Which rails this server accepts */
-  acceptedRails: Array<"l402" | "x402">;
+  acceptedRails: Array<"l402" | "x402" | "arkade">;
   /** x402 payment details */
   x402Network?: string;
   x402PayTo?: string;
   x402Asset?: string;
   x402MaxTimeout?: number;
+  /** Arkade recipient address */
+  arkadePayTo?: string;
 }
 
 /** Reserved param name for payment proof in tool calls */
 const PAYMENT_PROOF_PARAM = "_payment_proof";
 
+/** Zod schema for the payment proof parameter — added to every priced tool's inputSchema */
+const paymentProofSchema = z
+  .object({
+    type: z.enum(["l402", "x402", "arkade"]),
+    macaroon: z.string().optional(),
+    preimage: z.string().optional(),
+    payload: z.record(z.string(), z.unknown()).optional(),
+    txId: z.string().optional(),
+    from: z.string().optional(),
+  })
+  .optional();
+
 interface PaymentProofParam {
-  type: "l402" | "x402";
+  type: "l402" | "x402" | "arkade";
   macaroon?: string;
   preimage?: string;
   payload?: Record<string, unknown>;
+  txId?: string;
+  from?: string;
+}
+
+/**
+ * Inject the _payment_proof field into a tool's inputSchema so the MCP SDK
+ * passes it through Zod validation instead of stripping it.
+ *
+ * Handles three cases:
+ * - No existing schema → create one with just _payment_proof
+ * - ZodRawShapeCompat (plain object of Zod schemas) → add the field
+ * - Zod object schema → extend with .extend()
+ */
+function injectProofIntoSchema(
+  inputSchema: unknown,
+): Record<string, z.ZodTypeAny> | z.ZodObject<any> {
+  if (!inputSchema) {
+    // No existing schema — create a raw shape with just the proof field
+    return { [PAYMENT_PROOF_PARAM]: paymentProofSchema };
+  }
+
+  // Check if it's a Zod object schema (has .extend method)
+  if (
+    typeof inputSchema === "object" &&
+    inputSchema !== null &&
+    "extend" in inputSchema &&
+    typeof (inputSchema as any).extend === "function"
+  ) {
+    return (inputSchema as z.ZodObject<any>).extend({
+      [PAYMENT_PROOF_PARAM]: paymentProofSchema,
+    });
+  }
+
+  // Assume ZodRawShapeCompat (Record<string, AnySchema>) — add the field
+  return {
+    ...(inputSchema as Record<string, z.ZodTypeAny>),
+    [PAYMENT_PROOF_PARAM]: paymentProofSchema,
+  };
 }
 
 /**
@@ -59,6 +117,9 @@ interface PaymentProofParam {
  * - If no payment proof is in the args, returns a structured payment-required error
  * - If a proof is present, verifies it and either proceeds or rejects
  *
+ * The wrapper injects a `_payment_proof` field into each priced tool's
+ * inputSchema so the MCP SDK's Zod validation passes it through to the handler.
+ *
  * The calling client (Pay402Client or MCP transport adapter) recognizes the
  * structured error, executes payment, and retries with proof in _payment_proof.
  */
@@ -67,17 +128,23 @@ export function mcpPaymentWrapper(config: McpWrapperConfig) {
   const originalRegisterTool = server.registerTool.bind(server);
 
   // Override registerTool to wrap handlers for priced tools
-  server.registerTool = function wrappedRegisterTool(
+  (server as any).registerTool = function wrappedRegisterTool(
     name: string,
-    toolConfig: Parameters<typeof server.registerTool>[1],
-    handler: Parameters<typeof server.registerTool>[2],
+    toolConfig: Record<string, unknown>,
+    handler: Function,
   ) {
     const pricing = config.pricing[name];
 
     if (!pricing) {
       // No pricing for this tool — register as-is
-      return originalRegisterTool(name, toolConfig, handler);
+      return originalRegisterTool(name, toolConfig as any, handler as any);
     }
+
+    // Inject _payment_proof into the tool's inputSchema
+    const extendedConfig = {
+      ...toolConfig,
+      inputSchema: injectProofIntoSchema(toolConfig.inputSchema),
+    };
 
     // Wrap the handler with payment verification
     const wrappedHandler = async (
@@ -120,8 +187,8 @@ export function mcpPaymentWrapper(config: McpWrapperConfig) {
 
     return originalRegisterTool(
       name,
-      toolConfig,
-      wrappedHandler as Parameters<typeof server.registerTool>[2],
+      extendedConfig as any,
+      wrappedHandler as any,
     );
   };
 
@@ -150,6 +217,14 @@ function buildPaymentRequiredResponse(
       payTo: config.x402PayTo ?? "",
       asset: config.x402Asset ?? "",
       maxTimeoutSeconds: config.x402MaxTimeout ?? 60,
+    });
+  }
+
+  if (config.acceptedRails.includes("arkade") && pricing.arkade) {
+    challenges.push({
+      rail: "arkade",
+      amountSats: pricing.arkade,
+      payTo: config.arkadePayTo ?? "",
     });
   }
 
@@ -182,6 +257,11 @@ async function verifyProof(
   if (proof.type === "x402" && config.verifyX402) {
     if (!proof.payload) return false;
     return config.verifyX402(proof.payload);
+  }
+
+  if (proof.type === "arkade" && config.verifyArkade) {
+    if (!proof.txId || !proof.from) return false;
+    return config.verifyArkade({ txId: proof.txId, from: proof.from });
   }
 
   return false;

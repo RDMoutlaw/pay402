@@ -25,12 +25,17 @@
     "./types": {
       "types": "./dist/types/index.d.ts",
       "import": "./dist/types/index.js"
+    },
+    "./mcp-tool": {
+      "types": "./dist/mcp-tool/index.d.ts",
+      "import": "./dist/mcp-tool/index.js"
     }
   },
   "files": [
     "dist",
     "LICENSE",
-    "README.md"
+    "README.md",
+    "SKILL.md"
   ],
   "scripts": {
     "build": "tsc",
@@ -69,6 +74,18 @@
     "tsx": "^4.21.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
+  },
+  "peerDependencies": {
+    "@arkade-os/sdk": ">=0.3.0",
+    "@arkade-os/boltz-swap": ">=0.1.0"
+  },
+  "peerDependenciesMeta": {
+    "@arkade-os/sdk": {
+      "optional": true
+    },
+    "@arkade-os/boltz-swap": {
+      "optional": true
+    }
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",

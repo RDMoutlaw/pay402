@@ -1,15 +1,38 @@
 # pay402
 
-Universal HTTP 402 payment SDK for AI agents, MCP servers, and automated pipelines.
+**A universal payment layer for machine-to-machine commerce.**
 
-Handles both competing 402 payment protocols transparently:
-- **L402** (Lightning Labs) — Bitcoin Lightning Network + Macaroons
-- **x402** (Coinbase/Cloudflare) — USDC/stablecoins on Base and Solana
+HTTP 402 ("Payment Required") has been a reserved status code since 1997 — a placeholder for a future where software could pay for services the same way it follows redirects. That future is here. Multiple payment protocols now use 402, but they're incompatible with each other: Lightning uses macaroons and invoices, x402 uses EIP-712 signatures on Base, Solana has its own flow, and Arkade uses Bitcoin VTXOs. A client built for one can't talk to the others.
+
+pay402 is the universal adapter. One SDK that speaks every 402 dialect, so your code — whether it's an AI agent, an MCP server, a backend service, or a script — can pay any 402-gated endpoint regardless of which payment rail it uses. Configure your wallets once, set spend limits, and `client.fetch()` handles everything: challenge parsing, rail selection, payment execution, proof caching, and automatic retry.
+
+But pay402 goes further than just client-side payments:
+
+- **Bridge layer** — Don't have the right wallet? pay402 routes payments across rails. An Arkade wallet can pay a Lightning invoice via atomic swap. The server never knows the difference.
+- **Server middleware** — Gate your own Express routes or MCP tools behind payment with a few lines of config. Multi-rail, multi-price, plug in your own verification.
+- **Agent skill** — Register pay402 as MCP tools so AI agents can discover, estimate, and execute paid API calls autonomously — with spending controls that keep them on a leash.
+
+The net effect: any software with a wallet can pay any service with a price. The payment rail becomes an implementation detail, not a compatibility barrier.
+
+### Supported Rails
+
+| Rail | Protocol | Currency | Network |
+|------|----------|----------|---------|
+| **L402** | Lightning Labs | Bitcoin (sats) | Lightning Network |
+| **x402** | Coinbase | USDC | Base, Solana |
+| **Arkade** | Arkade | Bitcoin (sats) | Arkade VTXOs |
 
 ## Install
 
 ```bash
 npm install pay402
+```
+
+Optional peer dependencies for Arkade support:
+
+```bash
+npm install @arkade-os/sdk            # Arkade wallet
+npm install @arkade-os/boltz-swap     # Arkade->Lightning bridge
 ```
 
 ## Quick Start
@@ -22,6 +45,10 @@ export EVM_PRIVATE_KEY=0x...           # for x402 (Base/USDC)
 # or
 export LND_HOST=https://localhost:8080  # for L402 (Lightning)
 export LND_MACAROON=hex-encoded-macaroon
+# or
+export ARKADE_MNEMONIC="your twelve word mnemonic phrase here"
+export ARKADE_SERVER_URL=https://arkade.computer
+export ARKADE_NETWORK=mainnet
 
 # Set spend limits
 export PAY402_MAX_DAILY=10.00
@@ -72,6 +99,12 @@ const fetch402 = pay402Fetch({
       secretKey: process.env.SOLANA_SECRET_KEY!,
       cluster: "mainnet-beta",
     },
+    {
+      type: "arkade",
+      mnemonic: process.env.ARKADE_MNEMONIC!,
+      arkServerUrl: process.env.ARKADE_SERVER_URL!,
+      network: "mainnet",
+    },
   ],
   autoFetchBtcPrice: true,
   logLevel: "info",
@@ -116,6 +149,90 @@ const client = new Pay402Client({ wallets: [...] });
 axios.interceptors.request.use((config) => client.intercept(config));
 ```
 
+## Cross-Rail Bridging
+
+When a server requires a rail your wallet doesn't natively support, pay402 can bridge the payment. For example, an Arkade wallet can pay a Lightning (L402) invoice via a Boltz submarine swap.
+
+Bridging is **opt-in** and disabled by default:
+
+```typescript
+const client = new Pay402Client({
+  wallets: [
+    {
+      type: "arkade",
+      mnemonic: process.env.ARKADE_MNEMONIC!,
+      arkServerUrl: "https://arkade.computer",
+      network: "mainnet",
+    },
+  ],
+  bridging: {
+    enabled: true,
+    maxBridgeFeeUsd: 0.50,              // max bridge fee you're willing to pay
+    allowedPaths: ["arkade->l402"],      // only allow specific bridge paths
+  },
+  autoFetchBtcPrice: true,
+});
+
+// This works even though the server only accepts L402 (Lightning):
+const res = await client.fetch("https://lightning-only-api.com/data");
+```
+
+The server sees a valid L402 preimage — it doesn't know or care that the payment was funded via Arkade. Bridge fees are included in spend control checks.
+
+Currently supported bridge paths:
+
+| Source | Target | Provider |
+|--------|--------|----------|
+| `arkade` | `l402` | Boltz submarine swap (`@arkade-os/boltz-swap`) |
+
+## Agent Skill (MCP Client Tools)
+
+Register pay402 as a set of tools on an MCP server so AI agents can discover and use paid APIs:
+
+```typescript
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { registerPay402Tools } from "pay402/mcp-tool";
+
+const server = new McpServer({ name: "my-agent", version: "1.0" });
+registerPay402Tools(server);
+```
+
+This registers four tools:
+
+| Tool | Description | Key Input |
+|------|-------------|-----------|
+| `pay402_fetch` | Fetch a URL with automatic 402 payment | `url`, `method?`, `headers?`, `body?` |
+| `pay402_estimate` | Dry-run cost estimation | `url`, `method?` |
+| `pay402_spending` | View spending summary by period | `period?` (`hour`, `day`, `all`) |
+| `pay402_balance` | Check wallet balances | — |
+
+You can pass a pre-built client or let it auto-configure from environment variables:
+
+```typescript
+// With a pre-built client
+const client = new Pay402Client({ wallets: [...] });
+registerPay402Tools(server, { client });
+
+// Or auto-configure from env
+registerPay402Tools(server);
+```
+
+The package includes a [`SKILL.md`](SKILL.md) file for agent skill discovery.
+
+### Programmatic Spending & Balance API
+
+The client also exposes these methods directly:
+
+```typescript
+// Spending summary
+const summary = client.getSpendingSummary("hour");
+// { totalUsd: 3.50, count: 5, byRail: { l402: { totalUsd: 2.0, count: 3 }, ... } }
+
+// Wallet balances (currently supported for Arkade wallets)
+const balances = await client.getBalances();
+// [{ type: "arkade", balanceSats: 50000 }, { type: "lightning", error: "balance check not supported" }]
+```
+
 ## Server Middleware — Express
 
 ```typescript
@@ -127,15 +244,17 @@ const app = express();
 app.use(
   pay402Middleware({
     pricing: {
-      "/api/premium/*": { l402: 1000, x402: 500000 }, // 1000 sats or 0.50 USDC
-      "/api/data": { x402: 100000 },                   // 0.10 USDC only
+      "/api/premium/*": { l402: 1000, x402: 500000, arkade: 1000 }, // 1000 sats or 0.50 USDC
+      "/api/data": { x402: 100000 },                                 // 0.10 USDC only
     },
-    acceptedRails: ["l402", "x402"],
+    acceptedRails: ["l402", "x402", "arkade"],
     verifyL402: (macaroon, preimage) => { /* your verification logic */ },
     verifyX402: (payload) => { /* your verification logic */ },
+    verifyArkade: (proof) => { /* verify proof.txId and proof.from */ },
     x402PayTo: "0xYourAddress",
     x402Asset: "0xUSDCContractAddress",
     x402Network: "base",
+    arkadePayTo: "ark1YourArkadeAddress",
     onPaymentReceived: ({ rail, route, amount }) => {
       console.log(`Received payment on ${rail} for ${route}`);
     },
@@ -161,14 +280,16 @@ const server = new McpServer({ name: "my-server", version: "1.0.0" });
 mcpPaymentWrapper({
   server,
   pricing: {
-    "premium-analysis": { l402: 500, x402: 250000 },
+    "premium-analysis": { l402: 500, x402: 250000, arkade: 500 },
     "generate-report": { x402: 1000000 },
   },
-  acceptedRails: ["l402", "x402"],
+  acceptedRails: ["l402", "x402", "arkade"],
   verifyL402: (macaroon, preimage) => true,
   verifyX402: (payload) => true,
+  verifyArkade: (proof) => true,
   x402PayTo: "0xYourAddress",
   x402Asset: "0xUSDC",
+  arkadePayTo: "ark1YourAddress",
 });
 
 // Register tools as normal — payment is handled by the wrapper
@@ -185,7 +306,8 @@ When a tool is called without payment, the wrapper returns a structured error:
   "version": "pay402/1.0",
   "challenges": [
     { "rail": "l402", "amountSats": 500 },
-    { "rail": "x402", "network": "base", "amountSmallestUnit": 250000, "payTo": "0x...", "asset": "0x...", "maxTimeoutSeconds": 60 }
+    { "rail": "x402", "network": "base", "amountSmallestUnit": 250000, "payTo": "0x...", "asset": "0x...", "maxTimeoutSeconds": 60 },
+    { "rail": "arkade", "amountSats": 500, "payTo": "ark1..." }
   ]
 }
 ```
@@ -201,6 +323,30 @@ The calling client retries with proof in the `_payment_proof` parameter.
 | `lightning` | `lndHost`, `lndMacaroon` | `tlsCert` |
 | `evm` | `privateKey` (0x-prefixed), `chain` | `rpcUrl`, `facilitatorUrl` |
 | `solana` | `secretKey`, `cluster` | `facilitatorUrl` |
+| `arkade` | `mnemonic`, `arkServerUrl`, `network` | — |
+
+### Environment Variables
+
+| Variable | Wallet | Description |
+|----------|--------|-------------|
+| `LND_HOST` | Lightning | LND REST API host |
+| `LND_MACAROON` | Lightning | Hex-encoded admin macaroon |
+| `LND_TLS_CERT` | Lightning | Base64 TLS cert for self-signed nodes |
+| `EVM_PRIVATE_KEY` | EVM | 0x-prefixed hex private key |
+| `EVM_CHAIN` | EVM | `base` or `base-sepolia` (default: `base`) |
+| `EVM_FACILITATOR_URL` | EVM | x402 facilitator URL |
+| `SOLANA_SECRET_KEY` | Solana | Base58-encoded keypair |
+| `SOLANA_CLUSTER` | Solana | `mainnet-beta` or `devnet` (default: `mainnet-beta`) |
+| `SOLANA_FACILITATOR_URL` | Solana | x402 facilitator URL |
+| `ARKADE_MNEMONIC` | Arkade | BIP-39 mnemonic phrase |
+| `ARKADE_SERVER_URL` | Arkade | Arkade server URL |
+| `ARKADE_NETWORK` | Arkade | `mainnet` or `testnet` (default: `mainnet`) |
+| `PAY402_MAX_PER_REQUEST` | — | Max USD per request |
+| `PAY402_MAX_HOURLY` | — | Max USD per rolling hour |
+| `PAY402_MAX_DAILY` | — | Max USD per rolling day |
+| `PAY402_BTC_PRICE_USD` | — | Static BTC price in USD |
+| `PAY402_AUTO_BTC_PRICE` | — | `true` to auto-fetch from CoinGecko |
+| `PAY402_LOG_LEVEL` | — | Logging level |
 
 ### Spend Controls
 
@@ -214,7 +360,7 @@ The calling client retries with proof in the `_payment_proof` parameter.
     maxHourly: 10.00,     // rolling window
     maxDaily: 50.00,      // rolling window
   },
-  railPreference: ["x402-base", "l402"],  // or "cheapest"
+  railPreference: ["x402-base", "l402", "arkade"],  // or "cheapest"
   allowlist: ["https://trusted.com/**"],
   denylist: ["https://*.evil.com/**"],
   dryRun: false,
@@ -222,6 +368,18 @@ The calling client retries with proof in the `_payment_proof` parameter.
 ```
 
 For a complete guide on configuring spend policies for autonomous agents — budget tiers, approval workflows, multi-agent setups, and emergency controls — see [Agent Spend Policy Guide](docs/agent-spend-policy.md).
+
+### Bridging Config
+
+```typescript
+{
+  bridging: {
+    enabled: true,                       // default: false
+    maxBridgeFeeUsd: 1.00,              // default: $1
+    allowedPaths: ["arkade->l402"],       // restrict which bridge paths are allowed
+  },
+}
+```
 
 ### Dry Run Mode
 
@@ -248,9 +406,10 @@ All errors extend `Pay402Error`:
 | `PaymentInFlightError` | LND returned IN_FLIGHT — outcome unknown |
 | `PaymentVerificationError` | Server still returned 402 after payment |
 | `InvoiceExpiredError` | BOLT11 invoice expired before payment attempt |
+| `BridgePaymentFailedError` | Bridge swap failed (includes `bridgePath` field) |
 
 ```typescript
-import { SpendLimitExceededError, PaymentFailedError } from "pay402";
+import { SpendLimitExceededError, PaymentFailedError, BridgePaymentFailedError } from "pay402";
 
 try {
   await client.fetch("https://api.example.com/data");
@@ -260,6 +419,9 @@ try {
   }
   if (err instanceof PaymentFailedError) {
     console.log(`Payment failed on ${err.rail}: ${err.underlyingError.message}`);
+  }
+  if (err instanceof BridgePaymentFailedError) {
+    console.log(`Bridge failed on ${err.bridgePath}: ${err.underlyingError.message}`);
   }
 }
 ```
@@ -294,30 +456,32 @@ console.log(provider.getPrice()); // latest price
 provider.stop(); // cleanup
 ```
 
+## How It Works
+
+1. Client makes a request to a 402-gated endpoint
+2. Server returns `402` with `WWW-Authenticate` (L402), `X-Payment-Required` (x402), and/or `X-Arkade-Payment` headers
+3. SDK parses challenges from all headers
+4. Checks token cache — if valid cached proof exists, skips payment
+5. Runs spend control checks — blocks if any limit would be exceeded
+6. Selects optimal rail based on wallet availability and preference config
+7. If no direct match and bridging is enabled, attempts cross-rail bridge (e.g. Arkade -> L402)
+8. Executes payment via the matching rail adapter (or bridge provider)
+9. Retries the original request with proof-of-payment headers
+10. Caches the token for future requests
+11. Returns the response — caller never sees the 402
+
 ## Security
 
 This SDK handles private keys and real money. Keep these in mind:
 
-- **Never hardcode private keys.** Load them from environment variables or a secret manager.
+- **Never hardcode private keys or mnemonics.** Load them from environment variables or a secret manager.
 - **The x402 facilitator is a trusted third party.** When using x402, your signed EIP-3009 authorization is submitted to a facilitator (default: `x402.org`). The facilitator executes the on-chain transfer. A malicious facilitator could withhold or front-run transactions. Use `facilitatorUrl` to point to a facilitator you trust.
+- **Bridge swaps involve a third party.** The Arkade->L402 bridge uses Boltz for submarine swaps. Bridge fees are included in spend control checks, but the swap itself is a trust relationship with the Boltz service.
 - **Spend controls are your safety net.** Always configure `maxSinglePaymentUsd` and `global.maxDaily` for autonomous agents. The default hard ceiling is $10 per payment.
 - **No auto-retry after payment failure.** If a payment fails, the SDK throws immediately. It does not try another rail — money may have already left your wallet.
 - **No auto-fallback between rails.** Rail selection happens before payment. Once a rail is chosen and payment begins, there's no switching.
 
 To report a security vulnerability, please open a private issue or email the maintainers directly.
-
-## How It Works
-
-1. Client makes a request to a 402-gated endpoint
-2. Server returns `402` with `WWW-Authenticate` (L402) and/or `X-Payment-Required` (x402) headers
-3. SDK parses challenges from both headers
-4. Checks token cache — if valid cached proof exists, skips payment
-5. Runs spend control checks — blocks if any limit would be exceeded
-6. Selects optimal rail based on wallet availability and preference config
-7. Executes payment via the matching rail adapter
-8. Retries the original request with proof-of-payment headers
-9. Caches the token for future requests
-10. Returns the response — caller never sees the 402
 
 ## Contributing
 
