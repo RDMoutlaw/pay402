@@ -20,13 +20,7 @@ export interface X402PaymentProof {
   };
 }
 
-export interface ArkadePaymentProof {
-  type: "arkade";
-  txId: string;
-  from: string;
-}
-
-export type PaymentProof = L402PaymentProof | X402PaymentProof | ArkadePaymentProof;
+export type PaymentProof = L402PaymentProof | X402PaymentProof;
 
 export interface CostEstimate {
   /** Amount in native units (sats or smallest USDC unit) */

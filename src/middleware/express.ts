@@ -5,21 +5,17 @@ export interface MiddlewarePricing {
   l402?: number;
   /** Price in smallest USDC unit for x402 rail */
   x402?: number;
-  /** Price in sats for Arkade rail */
-  arkade?: number;
 }
 
 export interface Pay402MiddlewareConfig {
   /** Per-route pricing: route pattern -> pricing */
   pricing: Record<string, MiddlewarePricing>;
   /** Which rails this server accepts */
-  acceptedRails: Array<"l402" | "x402" | "arkade">;
+  acceptedRails: Array<"l402" | "x402">;
   /** Verify an L402 payment proof. Returns true if valid. */
   verifyL402?: (macaroon: string, preimage: string) => boolean | Promise<boolean>;
   /** Verify an x402 payment proof. Returns true if valid. */
   verifyX402?: (payload: Record<string, unknown>) => boolean | Promise<boolean>;
-  /** Verify an Arkade payment proof. Returns true if valid. */
-  verifyArkade?: (proof: { txId: string; from: string }) => boolean | Promise<boolean>;
   /** Called after successful payment verification */
   onPaymentReceived?: (info: {
     rail: string;
@@ -34,8 +30,6 @@ export interface Pay402MiddlewareConfig {
   x402Asset?: string;
   /** Max timeout for x402 payments in seconds (default: 60) */
   x402MaxTimeout?: number;
-  /** Arkade recipient address (ark1...) */
-  arkadePayTo?: string;
 }
 
 /**
@@ -69,32 +63,6 @@ export function pay402Middleware(config: Pay402MiddlewareConfig) {
           return next();
         }
         return res.status(401).json({ error: "Invalid L402 payment proof" });
-      }
-    }
-
-    // Try Arkade verification
-    const arkadeProofHeader = req.headers["x-arkade-payment-proof"] as string | undefined;
-    if (arkadeProofHeader && config.acceptedRails.includes("arkade")) {
-      if (config.verifyArkade) {
-        let proof: { txId: string; from: string };
-        try {
-          proof = JSON.parse(
-            Buffer.from(arkadeProofHeader, "base64").toString("utf-8"),
-          );
-        } catch {
-          return res.status(401).json({ error: "Invalid X-Arkade-Payment-Proof header" });
-        }
-
-        const valid = await config.verifyArkade(proof);
-        if (valid) {
-          config.onPaymentReceived?.({
-            rail: "arkade",
-            route: req.path,
-            amount: pricing.arkade ?? 0,
-          });
-          return next();
-        }
-        return res.status(401).json({ error: "Invalid Arkade payment proof" });
       }
     }
 
@@ -146,15 +114,6 @@ export function pay402Middleware(config: Pay402MiddlewareConfig) {
         maxTimeoutSeconds: config.x402MaxTimeout ?? 60,
       };
       res.setHeader("X-Payment-Required", JSON.stringify(challenge));
-    }
-
-    if (config.acceptedRails.includes("arkade") && pricing.arkade) {
-      const challenge = {
-        payTo: config.arkadePayTo ?? "",
-        amountSats: pricing.arkade,
-        maxTimeoutSeconds: config.x402MaxTimeout ?? 60,
-      };
-      res.setHeader("X-Arkade-Payment", JSON.stringify(challenge));
     }
 
     return res.json({

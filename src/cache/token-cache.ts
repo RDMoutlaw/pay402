@@ -42,13 +42,6 @@ export class TokenCache {
         expiresAt: Date.now() + (ttlMs ?? 30_000),
         proof,
       });
-    } else if (proof.type === "arkade") {
-      this.store.set(key, {
-        railId: "arkade",
-        token: btoa(JSON.stringify({ txId: proof.txId, from: proof.from })),
-        expiresAt: Date.now() + (ttlMs ?? DEFAULT_L402_TTL_MS),
-        proof,
-      });
     }
   }
 

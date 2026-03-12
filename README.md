@@ -20,7 +20,8 @@ The net effect: any software with a wallet can pay any service with a price. The
 |------|----------|----------|---------|
 | **L402** | Lightning Labs | Bitcoin (sats) | Lightning Network |
 | **x402** | Coinbase | USDC | Base, Solana |
-| **Arkade** | Arkade | Bitcoin (sats) | Arkade VTXOs |
+
+Arkade wallets are supported as a **funding source** via the bridge layer — they can pay L402 invoices through atomic swaps, but Arkade is not a server-facing payment rail.
 
 ## Install
 
@@ -244,17 +245,15 @@ const app = express();
 app.use(
   pay402Middleware({
     pricing: {
-      "/api/premium/*": { l402: 1000, x402: 500000, arkade: 1000 }, // 1000 sats or 0.50 USDC
+      "/api/premium/*": { l402: 1000, x402: 500000 }, // 1000 sats or 0.50 USDC
       "/api/data": { x402: 100000 },                                 // 0.10 USDC only
     },
-    acceptedRails: ["l402", "x402", "arkade"],
+    acceptedRails: ["l402", "x402"],
     verifyL402: (macaroon, preimage) => { /* your verification logic */ },
     verifyX402: (payload) => { /* your verification logic */ },
-    verifyArkade: (proof) => { /* verify proof.txId and proof.from */ },
     x402PayTo: "0xYourAddress",
     x402Asset: "0xUSDCContractAddress",
     x402Network: "base",
-    arkadePayTo: "ark1YourArkadeAddress",
     onPaymentReceived: ({ rail, route, amount }) => {
       console.log(`Received payment on ${rail} for ${route}`);
     },
@@ -280,16 +279,14 @@ const server = new McpServer({ name: "my-server", version: "1.0.0" });
 mcpPaymentWrapper({
   server,
   pricing: {
-    "premium-analysis": { l402: 500, x402: 250000, arkade: 500 },
+    "premium-analysis": { l402: 500, x402: 250000 },
     "generate-report": { x402: 1000000 },
   },
-  acceptedRails: ["l402", "x402", "arkade"],
+  acceptedRails: ["l402", "x402"],
   verifyL402: (macaroon, preimage) => true,
   verifyX402: (payload) => true,
-  verifyArkade: (proof) => true,
   x402PayTo: "0xYourAddress",
   x402Asset: "0xUSDC",
-  arkadePayTo: "ark1YourAddress",
 });
 
 // Register tools as normal — payment is handled by the wrapper
@@ -307,7 +304,6 @@ When a tool is called without payment, the wrapper returns a structured error:
   "challenges": [
     { "rail": "l402", "amountSats": 500 },
     { "rail": "x402", "network": "base", "amountSmallestUnit": 250000, "payTo": "0x...", "asset": "0x...", "maxTimeoutSeconds": 60 },
-    { "rail": "arkade", "amountSats": 500, "payTo": "ark1..." }
   ]
 }
 ```
@@ -360,7 +356,7 @@ The calling client retries with proof in the `_payment_proof` parameter.
     maxHourly: 10.00,     // rolling window
     maxDaily: 50.00,      // rolling window
   },
-  railPreference: ["x402-base", "l402", "arkade"],  // or "cheapest"
+  railPreference: ["x402-base", "l402"],  // or "cheapest"
   allowlist: ["https://trusted.com/**"],
   denylist: ["https://*.evil.com/**"],
   dryRun: false,
@@ -459,7 +455,7 @@ provider.stop(); // cleanup
 ## How It Works
 
 1. Client makes a request to a 402-gated endpoint
-2. Server returns `402` with `WWW-Authenticate` (L402), `X-Payment-Required` (x402), and/or `X-Arkade-Payment` headers
+2. Server returns `402` with `WWW-Authenticate` (L402) and/or `X-Payment-Required` (x402) headers
 3. SDK parses challenges from all headers
 4. Checks token cache — if valid cached proof exists, skips payment
 5. Runs spend control checks — blocks if any limit would be exceeded

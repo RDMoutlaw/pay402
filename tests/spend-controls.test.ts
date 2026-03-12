@@ -243,7 +243,6 @@ describe("SpendControls", () => {
         "l402",
         "x402-base",
         "x402-solana",
-        "arkade",
       ]);
     });
 

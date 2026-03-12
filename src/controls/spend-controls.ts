@@ -118,7 +118,7 @@ export class SpendControls {
    * Get the preferred rail ordering based on config.
    */
   get railPreference(): RailId[] | "cheapest" {
-    return this.config.railPreference ?? ["l402", "x402-base", "x402-solana", "arkade"];
+    return this.config.railPreference ?? ["l402", "x402-base", "x402-solana"];
   }
 
   get isDryRun(): boolean {

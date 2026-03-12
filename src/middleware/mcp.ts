@@ -7,8 +7,6 @@ export interface McpToolPricing {
   l402?: number;
   /** Price in smallest USDC unit for x402 rail */
   x402?: number;
-  /** Price in sats for Arkade rail */
-  arkade?: number;
 }
 
 export interface McpPaymentChallenge {
@@ -24,7 +22,6 @@ export interface McpPaymentChallenge {
         asset: string;
         maxTimeoutSeconds: number;
       }
-    | { rail: "arkade"; amountSats: number; payTo: string }
   >;
 }
 
@@ -37,17 +34,13 @@ export interface McpWrapperConfig {
   verifyL402?: (macaroon: string, preimage: string) => boolean | Promise<boolean>;
   /** Verify x402 proof. Returns true if valid. */
   verifyX402?: (payload: Record<string, unknown>) => boolean | Promise<boolean>;
-  /** Verify Arkade proof. Returns true if valid. */
-  verifyArkade?: (proof: { txId: string; from: string }) => boolean | Promise<boolean>;
   /** Which rails this server accepts */
-  acceptedRails: Array<"l402" | "x402" | "arkade">;
+  acceptedRails: Array<"l402" | "x402">;
   /** x402 payment details */
   x402Network?: string;
   x402PayTo?: string;
   x402Asset?: string;
   x402MaxTimeout?: number;
-  /** Arkade recipient address */
-  arkadePayTo?: string;
 }
 
 /** Reserved param name for payment proof in tool calls */
@@ -56,22 +49,18 @@ const PAYMENT_PROOF_PARAM = "_payment_proof";
 /** Zod schema for the payment proof parameter — added to every priced tool's inputSchema */
 const paymentProofSchema = z
   .object({
-    type: z.enum(["l402", "x402", "arkade"]),
+    type: z.enum(["l402", "x402"]),
     macaroon: z.string().optional(),
     preimage: z.string().optional(),
     payload: z.record(z.string(), z.unknown()).optional(),
-    txId: z.string().optional(),
-    from: z.string().optional(),
   })
   .optional();
 
 interface PaymentProofParam {
-  type: "l402" | "x402" | "arkade";
+  type: "l402" | "x402";
   macaroon?: string;
   preimage?: string;
   payload?: Record<string, unknown>;
-  txId?: string;
-  from?: string;
 }
 
 /**
@@ -220,14 +209,6 @@ function buildPaymentRequiredResponse(
     });
   }
 
-  if (config.acceptedRails.includes("arkade") && pricing.arkade) {
-    challenges.push({
-      rail: "arkade",
-      amountSats: pricing.arkade,
-      payTo: config.arkadePayTo ?? "",
-    });
-  }
-
   const response: McpPaymentChallenge = {
     error: "payment_required",
     version: "pay402/1.0",
@@ -257,11 +238,6 @@ async function verifyProof(
   if (proof.type === "x402" && config.verifyX402) {
     if (!proof.payload) return false;
     return config.verifyX402(proof.payload);
-  }
-
-  if (proof.type === "arkade" && config.verifyArkade) {
-    if (!proof.txId || !proof.from) return false;
-    return config.verifyArkade({ txId: proof.txId, from: proof.from });
   }
 
   return false;

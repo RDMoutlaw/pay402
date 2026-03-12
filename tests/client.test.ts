@@ -134,35 +134,6 @@ vi.mock("../src/rails/x402-base.js", () => {
 
 vi.mock("../src/rails/arkade.js", () => {
   return {
-    ArkadeRailAdapter: class {
-      railId = "arkade" as const;
-      canHandle(c: { type: string }) {
-        return c.type === "arkade";
-      }
-      async pay() {
-        return {
-          type: "arkade" as const,
-          txId: "vtxo-tx-001",
-          from: "ark1sender",
-        };
-      }
-      buildAuthHeader(proof: { txId: string; from: string }) {
-        return {
-          "X-Arkade-Payment-Proof": btoa(
-            JSON.stringify({ txId: proof.txId, from: proof.from }),
-          ),
-        };
-      }
-      async estimateCost(challenge: { amountSats?: number }) {
-        const sats = challenge.amountSats ?? 0;
-        return {
-          amountRaw: String(sats),
-          currency: "sats" as const,
-          amountUsd: (sats / 1e8) * 60000,
-          confidence: "exact" as const,
-        };
-      }
-    },
     getOrCreateArkadeWallet: vi.fn(),
   };
 });
@@ -195,15 +166,6 @@ vi.mock("../src/bridge/arkade-bridge.js", () => {
     },
   };
 });
-
-function makeArkadeHeaders(
-  payTo = "ark1recipient",
-  amountSats = 5000,
-) {
-  return {
-    "x-arkade-payment": JSON.stringify({ payTo, amountSats }),
-  };
-}
 
 describe("Pay402Client", () => {
   let originalFetch: typeof globalThis.fetch;
@@ -627,36 +589,6 @@ describe("Pay402Client", () => {
     await expect(
       client.fetch("https://api.example.com/expensive"),
     ).rejects.toThrow(SpendLimitExceededError);
-  });
-
-  // Arkade happy path
-  it("pays an Arkade challenge and retries with X-Arkade-Payment-Proof", async () => {
-    const mockFetch = mockFetchSequence(
-      { status: 402, headers: makeArkadeHeaders() },
-      { status: 200, body: '{"data":"arkade-secret"}' },
-    );
-    globalThis.fetch = mockFetch;
-
-    const client = new Pay402Client({
-      wallets: [
-        {
-          type: "arkade",
-          mnemonic: "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about",
-          arkServerUrl: "https://arkade.computer",
-          network: "testnet",
-        },
-      ],
-      btcPriceUsd: 60000,
-    });
-
-    const response = await client.fetch("https://api.example.com/data");
-    expect(response.status).toBe(200);
-
-    expect(mockFetch).toHaveBeenCalledTimes(2);
-    const retryHeaders = new Headers(
-      (mockFetch.mock.calls[1][1] as RequestInit)?.headers,
-    );
-    expect(retryHeaders.get("x-arkade-payment-proof")).toBeTruthy();
   });
 
   // Bridge: Arkade wallet pays L402 via bridge

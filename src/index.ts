@@ -7,7 +7,6 @@ export {
   LightningRailAdapter,
   X402BaseAdapter,
   X402SolanaAdapter,
-  ArkadeRailAdapter,
   getOrCreateArkadeWallet,
 } from "./rails/index.js";
 export { createLogger } from "./logger.js";

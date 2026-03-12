@@ -313,34 +313,4 @@ describe("mcpPaymentWrapper", () => {
     expect(challenge.challenges[0].rail).toBe("l402");
   });
 
-  it("supports arkade proof verification", async () => {
-    const server = createMockServer();
-
-    mcpPaymentWrapper({
-      server: server as any,
-      pricing: { "tool": { arkade: 1000 } },
-      acceptedRails: ["arkade"],
-      verifyArkade: (proof) => proof.txId === "vtxo-001",
-      arkadePayTo: "ark1server",
-    });
-
-    server.registerTool(
-      "tool",
-      {},
-      async () => ({
-        content: [{ type: "text" as const, text: "arkade content" }],
-      }),
-    );
-
-    const result = (await server.callTool("tool", {
-      _payment_proof: {
-        type: "arkade",
-        txId: "vtxo-001",
-        from: "ark1client",
-      },
-    })) as { content: Array<{ text: string }>; isError?: boolean };
-
-    expect(result.isError).toBeUndefined();
-    expect(result.content[0].text).toBe("arkade content");
-  });
 });

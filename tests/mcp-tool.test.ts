@@ -32,13 +32,6 @@ vi.mock("../src/rails/x402-solana.js", () => ({
 }));
 
 vi.mock("../src/rails/arkade.js", () => ({
-  ArkadeRailAdapter: class {
-    railId = "arkade" as const;
-    canHandle() { return false; }
-    async pay() { return {} as never; }
-    buildAuthHeader() { return {}; }
-    async estimateCost() { return { amountRaw: "0", currency: "sats", amountUsd: 0, confidence: "exact" }; }
-  },
   getOrCreateArkadeWallet: vi.fn(),
 }));
 

@@ -26,7 +26,6 @@ import { SpendControls } from "../controls/spend-controls.js";
 import { LightningRailAdapter } from "../rails/lightning.js";
 import { X402BaseAdapter } from "../rails/x402-base.js";
 import { X402SolanaAdapter } from "../rails/x402-solana.js";
-import { ArkadeRailAdapter } from "../rails/arkade.js";
 import { ArkadeBridgeProvider } from "../bridge/arkade-bridge.js";
 import { validateConfig } from "./validate.js";
 import { createLogger, type Logger } from "../logger.js";
@@ -71,7 +70,6 @@ export class Pay402Client {
       new LightningRailAdapter(),
       new X402BaseAdapter(),
       new X402SolanaAdapter(),
-      new ArkadeRailAdapter(),
     ];
 
     // Register bridge providers if bridging is enabled
@@ -468,8 +466,6 @@ export class Pay402Client {
         return this.wallets.find((w) => w.type === "evm");
       case "x402-solana":
         return this.wallets.find((w) => w.type === "solana");
-      case "arkade":
-        return this.wallets.find((w) => w.type === "arkade");
     }
   }
 }
